@@ -73,8 +73,26 @@ def is_route(feature):
     """ Drivable feature predicate.
     :returns: True if feature is drivable.
     """
-    return geodesy.props.match(feature,
-                               set(['bridge', 'highway', 'tunnel']))
+    
+    # Added to filter highway, but only with certain values
+    map_keys = set(['highway'])
+    map_vals = set(['footway','cycleway'])
+    
+    ret = geodesy.props.match(feature,map_keys)
+                               
+    if ret is None:
+                                   
+      return None
+      
+    else:
+    
+      if ret[0] in map_keys and ret[1] in map_vals:
+      
+        return True
+        
+      else:
+       
+        return None
 
 # URL, unique to this package
 PKG_URL = 'http://ros.org/wiki/' + PKG_NAME

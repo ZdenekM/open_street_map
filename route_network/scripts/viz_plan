@@ -44,12 +44,17 @@ import rospy
 import sys
 import random
 import geodesy.wu_point
+import geodesy.utm
+import math
 
+from geodesy import bounding_box
+from geographic_msgs.srv import GetGeographicMap
 from geographic_msgs.msg import RouteNetwork
 from geographic_msgs.msg import RouteSegment
 from geographic_msgs.srv import GetRoutePlan
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Vector3
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
@@ -73,11 +78,43 @@ class VizPlanNode():
                                    MarkerArray, latch=True)
 
         rospy.wait_for_service('get_geographic_map')
+        self.get_map_srv = rospy.ServiceProxy('get_geographic_map',
+                                          GetGeographicMap)
         self.get_plan = rospy.ServiceProxy('get_route_plan', GetRoutePlan)
 
         # subscribe to route network
         self.sub = rospy.Subscriber('route_network', RouteNetwork,
                                     self.graph_callback)
+                                    
+        self.m_start = geodesy.utm.fromLatLong(49.206071,16.605928)
+        self.m_goal = geodesy.utm.fromLatLong(49.207902,16.609891)
+        
+        if not self.m_start.valid():
+        
+          rospy.logerr('Start NOT valid.')
+          
+        if not self.m_goal.valid():
+        
+          rospy.logerr('Goal NOT valid.')
+          
+        self.map = None
+        
+        self.map_url = rospy.get_param('map_url','package://test_osm/tests/luzanky.osm')
+          
+        try:
+            resp = self.get_map_srv(self.map_url, bounding_box.makeGlobal())
+            self.map = resp.map
+            
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed:", str(e))
+            
+        # get bounds of the map
+        bbox = self.map.bounds
+        min_lat, min_lon, max_lat, max_lon = bounding_box.getLatLong(bbox)
+        self.p0 = geodesy.utm.fromLatLong(min_lat, min_lon).toPoint()
+        self.p1 = geodesy.utm.fromLatLong(min_lat, max_lon).toPoint()
+        self.p2 = geodesy.utm.fromLatLong(max_lat, max_lon).toPoint()
+        self.p3 = geodesy.utm.fromLatLong(max_lat, min_lon).toPoint()
 
         self.timer_interval = rospy.Duration(4)
         self.marker_life = self.timer_interval + rospy.Duration(1)
@@ -97,17 +134,86 @@ class VizPlanNode():
             self.segment_ids[graph.segments[sid].id.uuid] = sid
         self.graph = graph
 
+    def find_closest_wp(self,utmp):
+    
+      p = utmp.toPoint()
+      
+      min_dist = 100000000.0
+      min_idx = None
+      
+      print 'Searching for min in ' + str(len(self.graph.points)) + ' points.'
+      
+      for idx in range(0,len(self.graph.points)):
+      
+        #gp = self.graph.points[idx].toPointXY()
+        pid = self.graph.points[idx].id.uuid
+        gp = self.points.get(pid).toPointXY()
+        
+        dist = math.sqrt((p.x-gp.x)**2 + (p.y-gp.y)**2)
+        
+        #print dist
+        
+        if dist < min_dist:
+        
+          min_dist = dist
+          min_idx = idx
+          
+      if min_idx is not None:
+      
+        print 'min dist: ' + str(min_dist) + ' (idx ' + str(min_idx) + ')'
+        return min_idx
+        
+      else:
+      
+        return None
+        
+          
+        
+        
+        
+    
+
+
     def timer_callback(self, event):
         """ Called periodically. """
         if self.graph is None:
             print 'still waiting for graph'
             return
+            
+            
+        #try to find closest waypoints to our coordinates
+        idx0 = self.find_closest_wp(self.m_start)
+        idx1 = self.find_closest_wp(self.m_goal)
+        
+        if idx0 is None or idx1 is None:
+        
+          rospy.logerr('Grr')
+          return
 
-        # select two different way points at random
-        idx0, idx1 = random.sample(xrange(len(self.graph.points)), 2)
         start = self.graph.points[idx0].id.uuid
         goal = self.graph.points[idx1].id.uuid
+        
         rospy.loginfo('plan from ' + start + ' to ' + goal)
+
+        # randomly chose waypoints
+        #repeat = True
+        
+        #while repeat:
+
+          # select two different way points at random
+        #  idx0, idx1 = random.sample(xrange(len(self.graph.points)), 2)
+        #  start = self.graph.points[idx0].id.uuid
+        #  goal = self.graph.points[idx1].id.uuid
+        #  rospy.loginfo('plan from ' + start + ' to ' + goal)
+
+        #  p1 = self.points.get(start).toPointXY()
+        #  p2 = self.points.get(goal).toPointXY()
+          
+        #  if p1.x >= self.p0.x and p1.x <= self.p1.x and p1.y >= self.p0.y  and p1.y <= self.p3.y:
+          
+        #    if p2.x >= self.p0.x and p2.x <= self.p1.x and p2.y >= self.p0.y  and p2.y <= self.p3.y:
+          
+        #      repeat = False
 
         try:
             resp = self.get_plan(self.graph.id,
@@ -145,6 +251,36 @@ class VizPlanNode():
             marker.points.append(self.points[segment.start.uuid].toPointXY())
             marker.points.append(self.points[segment.end.uuid].toPointXY())
             marks.markers.append(marker)
+            
+        point = self.m_start.toPoint() 
+        point.z = 0.2
+        ps = Marker(header = hdr,
+                    ns = 'start_and_goal',
+                    id = index,
+                    type = Marker.SPHERE,
+                    action = Marker.ADD,
+                    scale = Vector3(x=6.0,y=6.0,z=6.0),
+                    color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.8),
+                    lifetime = self.marker_life,
+                    pose = Pose(point,Quaternion(x=0.0,y=0.0,z=0.0,w=1.0)))
+        
+        marks.markers.append(ps)
+        
+        index += 1
+        
+        point = self.m_goal.toPoint() 
+        point.z = 0.2        
+        pg = Marker(header = hdr,
+                    ns = 'start_and_goal',
+                    id = index,
+                    type = Marker.SPHERE,
+                    action = Marker.ADD,
+                    scale = Vector3(x=6.0,y=6.0,z=6.0),
+                    color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.8),
+                    lifetime = self.marker_life,
+                    pose = Pose(point,Quaternion(x=0.0,y=0.0,z=0.0,w=1.0)))
+                    
+        marks.markers.append(pg)
 
         self.pub.publish(marks)
     

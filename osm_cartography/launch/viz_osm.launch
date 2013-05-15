@@ -7,7 +7,7 @@
 
 <launch>
 
-  <arg name="url" default="package://osm_cartography/tests/prc.osm" />
+  <arg name="url" default="" />
 
   <!-- Transform /map into /local_map frame. Rviz cannot handle large
        UTM coordinates, they require double precision, so we visualize
@@ -15,13 +15,13 @@
        errors in rviz.
   -->
   <node pkg="tf" type="static_transform_publisher" name="local_map_tf"
-        args="622150 3362350 0 0 0 0 1 map local_map 100" />
+        args="617492 5451968 0 0 0 0 1 map local_map 100" />
 
   <!-- start map server -->
-  <node pkg="osm_cartography" type="osm_server" name="osm_server" />
+  <node pkg="osm_cartography" type="osm_server" name="osm_server" output="screen"/>
 
   <!-- start map visualization -->
-  <node pkg="osm_cartography" type="viz_osm" name="viz_osm" >
+  <node pkg="osm_cartography" type="viz_osm" name="viz_osm" output="screen" >
     <param name="map_url" value="$(arg url)" />
   </node>
 
